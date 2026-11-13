@@ -106,10 +106,17 @@ public class TestApp : IAsyncLifetime
         return (await LoginStudentAsync($"student{id}"), id);
     }
 
+    /// <summary>A login body with a freshly solved captcha (the test reads the code straight from the service).</summary>
+    public object LoginBody(string username, string password = StudentPassword, bool terminateExisting = false)
+    {
+        var challenge = Factory.Services.GetRequiredService<HemCompetition.API.Services.CaptchaService>().Create();
+        return new { usernameOrEmail = username, password, terminateExisting, captchaId = challenge.Id, captchaAnswer = challenge.Code };
+    }
+
     public async Task<HttpClient> LoginStudentAsync(string username, string password = StudentPassword)
     {
         var client = Anonymous();
-        var response = await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = username, password });
+        var response = await client.PostAsJsonAsync("/api/auth/login", LoginBody(username, password));
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         var token = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);

@@ -369,7 +369,7 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
         Assert.Equal((BanType.Suspension, BanSource.Automatic), (ban.Type, ban.Source)); // never an automatic permanent ban
 
         // Login now explains the restriction and offers an appeal.
-        var login = await app.Anonymous().PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{studentId}", password = TestApp.StudentPassword });
+        var login = await app.Anonymous().PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{studentId}", TestApp.StudentPassword));
         Assert.Equal(HttpStatusCode.Forbidden, login.StatusCode);
         var body = await login.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("BANNED", body.GetProperty("code").GetString());
@@ -388,7 +388,7 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
         Assert.Equal("APPEAL_PENDING", await duplicateAppeal.Code());
 
         // Filing an appeal does not restore access.
-        Assert.Equal(HttpStatusCode.Forbidden, (await app.Anonymous().PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{studentId}", password = TestApp.StudentPassword })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.Anonymous().PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{studentId}", TestApp.StudentPassword))).StatusCode);
         Assert.Equal("Pending", (await appealClient.GetJson("/api/appeals/mine")).GetProperty("appeals")[0].GetProperty("status").GetString());
 
         // Reviewer sees history and evidence links, adds a note, and must give a reason.
@@ -422,7 +422,7 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
         var studentId = await app.CreateStudentAsync();
         await admin.PostJson("/api/admin/bans", new { studentId, type = "Ban", reason = "Shared answers in a group chat." });
 
-        var login = await (await app.Anonymous().PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{studentId}", password = TestApp.StudentPassword })).Content.ReadFromJsonAsync<JsonElement>();
+        var login = await (await app.Anonymous().PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{studentId}", TestApp.StudentPassword))).Content.ReadFromJsonAsync<JsonElement>();
         var appealClient = app.Anonymous();
         appealClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login.GetProperty("appealToken").GetString());
         var appealId = (await appealClient.PostJson("/api/appeals", new { message = "I did not share anything with anyone at all." })).GetProperty("id").GetGuid();
@@ -431,7 +431,7 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
         var mine = await appealClient.GetJson("/api/appeals/mine");
         Assert.True(mine.GetProperty("restricted").GetBoolean());
         Assert.Equal("Screenshots show the messages.", mine.GetProperty("appeals")[0].GetProperty("decisionReason").GetString());
-        Assert.Equal(HttpStatusCode.Forbidden, (await app.Anonymous().PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{studentId}", password = TestApp.StudentPassword })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.Anonymous().PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{studentId}", TestApp.StudentPassword))).StatusCode);
 
         // A second appeal is allowed (limit 2), then converted to a dated suspension.
         var second = (await appealClient.PostJson("/api/appeals", new { message = "Please reconsider, it was my first competition." })).GetProperty("id").GetGuid();
@@ -596,7 +596,7 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
         var alphaId = await app.DbAsync(db => db.AuthUsers.Where(u => u.Username == "imp_alpha").Select(u => u.UserId).FirstAsync());
         await admin.PutJson($"/api/admin/students/{alphaId}", new { username = "imp_alpha", firstName = "Alpha", lastName = "One", isActive = false });
         Assert.Equal(HttpStatusCode.Unauthorized, (await alpha.GetAsync("/api/student/dashboard")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await app.Anonymous().PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = "imp_alpha", password = "Passw0rd!one" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.Anonymous().PostAsJsonAsync("/api/auth/login", app.LoginBody("imp_alpha", "Passw0rd!one"))).StatusCode);
 
         var student = await admin.GetJson($"/api/admin/students/{alphaId}");
         Assert.Single(student.GetProperty("gameAttempts").EnumerateArray());

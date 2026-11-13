@@ -39,8 +39,8 @@ export function StudentAuthProvider({ children }) {
     return () => clearInterval(timer)
   }, [state.status])
 
-  const login = useCallback(async (usernameOrEmail, password, terminateExisting = false) => {
-    const { data } = await api.post('/auth/login', { usernameOrEmail, password, terminateExisting })
+  const login = useCallback(async (usernameOrEmail, password, terminateExisting = false, captcha = {}) => {
+    const { data } = await api.post('/auth/login', { usernameOrEmail, password, terminateExisting, captchaId: captcha.id, captchaAnswer: captcha.answer })
     setToken('student', data.token)
     setNotice(null)
     setState({ status: 'authed', profile: data.profile })

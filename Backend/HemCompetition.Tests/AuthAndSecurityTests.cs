@@ -39,11 +39,36 @@ public class AuthAndSecurityTests(TestApp app) : IClassFixture<TestApp>
     {
         var id = await app.CreateStudentAsync();
         var client = app.Anonymous();
-        var unknown = await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = "nobody-here", password = "x" });
-        var wrong = await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = "wrong-password" });
+        var unknown = await client.PostAsJsonAsync("/api/auth/login", app.LoginBody("nobody-here", "x"));
+        var wrong = await client.PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{id}", "wrong-password"));
         Assert.Equal(HttpStatusCode.Unauthorized, unknown.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, wrong.StatusCode);
         Assert.Equal(await unknown.Content.ReadAsStringAsync(), await wrong.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Student_login_requires_a_correct_single_use_captcha()
+    {
+        var id = await app.CreateStudentAsync();
+        var client = app.Anonymous();
+        var shown = await client.GetJson("/api/auth/captcha");
+        Assert.True(shown.GetProperty("enabled").GetBoolean());
+        var svg = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(shown.GetProperty("image").GetString()!.Split(',')[1]));
+        Assert.DoesNotContain("<text", svg); // the code is drawn, not written in the markup
+
+        // Missing, wrong, and unknown captchas are refused before the password is even looked at.
+        var none = await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = TestApp.StudentPassword });
+        Assert.Equal("CAPTCHA_INVALID", await none.Code());
+        var wrong = await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = TestApp.StudentPassword, captchaId = shown.GetProperty("id").GetString(), captchaAnswer = "abcde" });
+        Assert.Equal("CAPTCHA_INVALID", await wrong.Code());
+        Assert.Equal(0, await app.DbAsync(db => db.AuthUsers.Where(u => u.UserId == id).Select(u => u.AccessFailedCount).FirstAsync()));
+
+        // A solved captcha works once: replaying it with another password guess fails.
+        var body = app.LoginBody($"student{id}", "wrong-password");
+        Assert.Equal("INVALID_CREDENTIALS", await (await client.PostAsJsonAsync("/api/auth/login", body)).Code());
+        Assert.Equal("CAPTCHA_INVALID", await (await client.PostAsJsonAsync("/api/auth/login", body)).Code());
+
+        (await client.PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{id}"))).EnsureSuccessStatusCode();
     }
 
     [Fact]
@@ -52,8 +77,8 @@ public class AuthAndSecurityTests(TestApp app) : IClassFixture<TestApp>
         var id = await app.CreateStudentAsync();
         var client = app.Anonymous();
         for (var i = 0; i < 5; i++)
-            await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = "bad" });
-        var locked = await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = TestApp.StudentPassword });
+            await client.PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{id}", "bad"));
+        var locked = await client.PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{id}", TestApp.StudentPassword));
         Assert.Equal((HttpStatusCode)423, locked.StatusCode);
     }
 
@@ -64,17 +89,17 @@ public class AuthAndSecurityTests(TestApp app) : IClassFixture<TestApp>
         (await first.GetAsync("/api/student/dashboard")).EnsureSuccessStatusCode();
 
         var second = app.Anonymous();
-        var conflict = await second.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = TestApp.StudentPassword });
+        var conflict = await second.PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{id}", TestApp.StudentPassword));
         Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
         Assert.Equal("SESSION_ACTIVE", await conflict.Code());
         (await first.GetAsync("/api/student/dashboard")).EnsureSuccessStatusCode(); // still valid
 
         // Ending the other session requires the password again - a user id alone is not enough.
-        var bad = await second.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = "nope", terminateExisting = true });
+        var bad = await second.PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{id}", "nope", terminateExisting: true));
         Assert.Equal(HttpStatusCode.Unauthorized, bad.StatusCode);
         (await first.GetAsync("/api/student/dashboard")).EnsureSuccessStatusCode();
 
-        var ok = await second.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = $"student{id}", password = TestApp.StudentPassword, terminateExisting = true });
+        var ok = await second.PostAsJsonAsync("/api/auth/login", app.LoginBody($"student{id}", TestApp.StudentPassword, terminateExisting: true));
         ok.EnsureSuccessStatusCode();
         Assert.Equal(HttpStatusCode.Unauthorized, (await first.GetAsync("/api/student/dashboard")).StatusCode);
         Assert.True(await app.DbAsync(db => db.ViolationEvents.AnyAsync(v => v.StudentId == id && v.RuleCode == "MULTIPLE_SESSION")));
@@ -95,7 +120,7 @@ public class AuthAndSecurityTests(TestApp app) : IClassFixture<TestApp>
             return (response, set?.Split(';')[0]);
         }
 
-        var (login, cookie1) = await Send("/api/auth/login", new { usernameOrEmail = $"student{id}", password = TestApp.StudentPassword }, null);
+        var (login, cookie1) = await Send("/api/auth/login", app.LoginBody($"student{id}", TestApp.StudentPassword), null);
         login.EnsureSuccessStatusCode();
         Assert.NotNull(cookie1);
         Assert.Contains("httponly", string.Join(";", login.Headers.GetValues("Set-Cookie")).ToLowerInvariant());
@@ -180,7 +205,7 @@ public class AuthAndSecurityTests(TestApp app) : IClassFixture<TestApp>
     [Fact]
     public void Every_other_action_requires_sign_in_unless_explicitly_public()
     {
-        string[] publicActions = ["AuthController.Login", "AuthController.Refresh", "AdminAuthController.Login", "AdminAuthController.Refresh", "CompetitionInfoController.Active"];
+        string[] publicActions = ["AuthController.Login", "AuthController.Refresh", "AdminAuthController.Login", "AdminAuthController.Refresh", "CompetitionInfoController.Active", "AuthController.Captcha"];
         var open = typeof(AdminAuthController).Assembly.GetTypes()
             .Where(t => typeof(ControllerBase).IsAssignableFrom(t) && !t.IsAbstract)
             .SelectMany(t => t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
@@ -317,7 +342,7 @@ public class LegacyUpgradeTests(LegacyUpgradeTests.LegacyApp app) : IClassFixtur
     [Fact]
     public async Task Previously_disqualified_student_gets_a_ban_record_with_an_appeal_option()
     {
-        var response = await app.Anonymous().PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = "7744915362", password = "OldPassword#1" });
+        var response = await app.Anonymous().PostAsJsonAsync("/api/auth/login", app.LoginBody("7744915362", "OldPassword#1"));
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("BANNED", body.GetProperty("code").GetString());
