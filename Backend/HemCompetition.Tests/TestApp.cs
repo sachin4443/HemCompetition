@@ -85,11 +85,10 @@ public class TestApp : IAsyncLifetime
         return client;
     }
 
-    private static long _nextStudent = 900000;
-
     public async Task<long> CreateStudentAsync(string? username = null)
     {
-        var id = Interlocked.Increment(ref _nextStudent);
+        // Random ids: the import endpoint allocates max+1, so a counter would collide with it.
+        var id = Random.Shared.NextInt64(1_000_000, 900_000_000_000);
         var user = new AuthUser
         {
             Id = Guid.NewGuid(), UserId = id, Username = username ?? $"student{id}", FirstName = "Test", LastName = $"Student {id}",
