@@ -1,6 +1,0 @@
-@HemCompetition.API_HostAddress = http://localhost:5097
-
-GET {{HemCompetition.API_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
