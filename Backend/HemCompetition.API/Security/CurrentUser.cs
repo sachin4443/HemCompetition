@@ -9,6 +9,8 @@ public static class TokenTypes
     public const string Admin = "admin";
     /// <summary>Issued to a banned student after a correct password. Only allows filing and tracking an appeal.</summary>
     public const string Appeal = "appeal";
+    /// <summary>Lets the browser finish uploading evidence for one specific violation, even if that violation ended the session.</summary>
+    public const string Evidence = "evidence";
 }
 
 public static class Policies
@@ -16,6 +18,7 @@ public static class Policies
     public const string Student = "Student";
     public const string Admin = "Admin";
     public const string StudentOrAppeal = "StudentOrAppeal";
+    public const string EvidenceUpload = "EvidenceUpload";
 }
 
 public static class CurrentUser

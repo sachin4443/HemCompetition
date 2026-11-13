@@ -50,6 +50,14 @@ public sealed class TokenService(AppDbContext db, IOptions<JwtOptions> options)
         new(TokenTypes.Claim, TokenTypes.Appeal)
     ], _jwt.AppealTokenMinutes);
 
+    /// <summary>Short-lived, single-purpose token: upload evidence for this one event and nothing else.</summary>
+    public string EvidenceToken(long studentId, Guid eventId) => Write(
+    [
+        new("UserId", studentId.ToString()),
+        new("EventId", eventId.ToString()),
+        new(TokenTypes.Claim, TokenTypes.Evidence)
+    ], 3);
+
     private string Write(IEnumerable<Claim> claims, int minutes)
     {
         var credentials = new SigningCredentials(

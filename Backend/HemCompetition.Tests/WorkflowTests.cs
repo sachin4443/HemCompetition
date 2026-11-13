@@ -64,6 +64,14 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
 
     private static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9];
 
+    /// <summary>Uploads evidence the way the browser does: with the one-event token from the report response.</summary>
+    private async Task<HttpResponseMessage> SendEvidence(JsonElement outcome, byte[] bytes, string name, string type, Guid? eventId = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/proctoring/events/{eventId ?? outcome.GetProperty("eventId").GetGuid()}/evidence") { Content = Upload(bytes, name, type) };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", outcome.GetProperty("uploadToken").GetString());
+        return await app.Anonymous().SendAsync(request);
+    }
+
     private static MultipartFormDataContent Upload(byte[] bytes, string name, string type)
     {
         var part = new ByteArrayContent(bytes);
@@ -352,6 +360,8 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
 
         var third = await Report("MULTIPLE_FACES");
         Assert.Equal("Suspended", third.GetProperty("action").GetString());
+        // Evidence for the event that caused the suspension can still be delivered although the session is over.
+        (await SendEvidence(third, Jpeg, "s.jpg", "image/jpeg")).EnsureSuccessStatusCode();
         // The session is dead immediately.
         Assert.Equal(HttpStatusCode.Unauthorized, (await student.GetAsync("/api/student/dashboard")).StatusCode);
 
@@ -443,6 +453,8 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
         await ConsentAsync(student, evidence: false);
         var noConsent = await student.PostJson("/api/proctoring/events", new { ruleCode = "NO_FACE" });
         Assert.False(noConsent.GetProperty("captureImage").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, noConsent.GetProperty("uploadToken").ValueKind);
+        // The ordinary session token cannot upload evidence at all.
         Assert.Equal(HttpStatusCode.Forbidden, (await student.PostAsync($"/api/proctoring/events/{noConsent.GetProperty("eventId").GetGuid()}/evidence", Upload(Jpeg, "a.jpg", "image/jpeg"))).StatusCode);
 
         // With image consent but not video consent.
@@ -453,14 +465,17 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
         Assert.False(evt.GetProperty("captureVideo").GetBoolean());
         var eventId = evt.GetProperty("eventId").GetGuid();
 
-        var evidenceId = (await (await student.PostAsync($"/api/proctoring/events/{eventId}/evidence", Upload(Jpeg, "a.jpg", "image/jpeg"))).Json()).GetProperty("id").GetGuid();
+        var evidenceId = (await (await SendEvidence(evt, Jpeg, "a.jpg", "image/jpeg")).Json()).GetProperty("id").GetGuid();
         // An HTML file renamed to .jpg is rejected by content, and a real video is rejected without video consent.
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await student.PostAsync($"/api/proctoring/events/{eventId}/evidence", Upload("<html><script>alert(1)</script>"u8.ToArray(), "a.jpg", "image/jpeg"))).StatusCode);
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await student.PostAsync($"/api/proctoring/events/{eventId}/evidence", Upload([0x1A, 0x45, 0xDF, 0xA3, 1, 2, 3, 4, 5, 6, 7, 8], "a.webm", "video/webm"))).StatusCode);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await SendEvidence(evt, "<html><script>alert(1)</script>"u8.ToArray(), "a.jpg", "image/jpeg")).StatusCode);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await SendEvidence(evt, [0x1A, 0x45, 0xDF, 0xA3, 1, 2, 3, 4, 5, 6, 7, 8], "a.webm", "video/webm")).StatusCode);
 
-        // Another student cannot attach files to this event.
-        var (other, _) = await app.StudentAsync();
-        Assert.Equal(HttpStatusCode.NotFound, (await other.PostAsync($"/api/proctoring/events/{eventId}/evidence", Upload(Jpeg, "a.jpg", "image/jpeg"))).StatusCode);
+        // The upload token is bound to its own event and opens nothing else.
+        Assert.Equal(HttpStatusCode.Forbidden, (await SendEvidence(evt, Jpeg, "a.jpg", "image/jpeg", noConsent.GetProperty("eventId").GetGuid())).StatusCode);
+        var tokenOnly = app.Anonymous();
+        tokenOnly.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", evt.GetProperty("uploadToken").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden, (await tokenOnly.GetAsync("/api/games")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await tokenOnly.PostAsJsonAsync("/api/proctoring/events", new { ruleCode = "NO_FACE" })).StatusCode);
 
         var file = await app.DbAsync(db => db.EvidenceFiles.SingleAsync(e => e.Id == evidenceId));
         Assert.Equal(("image/jpeg", (long)Jpeg.Length), (file.ContentType, file.SizeBytes));
@@ -518,6 +533,13 @@ public class WorkflowTests(TestApp app) : IClassFixture<TestApp>
     {
         var competition = await app.LiveCompetitionAsync(showResults: true, showLeaderboard: true);
         var admin = await app.AdminAsync();
+
+        // A leaderboard with a single participant still shows their total.
+        var (solo, _) = await app.StudentAsync();
+        var soloAttempt = (await solo.PostJson("/api/games/word/start")).GetProperty("id").GetGuid();
+        await solo.PostJson($"/api/games/attempts/{soloAttempt}/submit", new { roundNo = 1, answer = await CorrectAnswerAsync(soloAttempt, 1) });
+        await solo.PostJson($"/api/games/attempts/{soloAttempt}/quit");
+        Assert.Equal(10m, (await solo.GetJson("/api/student/leaderboard")).GetProperty("me").GetProperty("totalScore").GetDecimal());
 
         // Import two students, play one game each with different outcomes.
         var csv = "username,password,first_name,last_name,city\nimp_alpha,Passw0rd!one,Alpha,One,Pune\nimp_beta,Passw0rd!two,Beta,Two,Surat\n";

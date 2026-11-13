@@ -37,13 +37,14 @@ public sealed class CameraStatusRequest
 
 [ApiController]
 [Route("api/proctoring")]
-[Authorize(Policy = Policies.Student)]
+[Authorize]
 public class ProctoringController(
     AppDbContext db, ProctoringService proctoring, SettingsService settingsService,
     CompetitionService competitions, IFileStorage storage) : ControllerBase
 {
     /// <summary>What the student must agree to and what the browser should monitor.</summary>
     [HttpGet("status")]
+    [Authorize(Policy = Policies.Student)]
     public async Task<IActionResult> Status()
     {
         var studentId = User.StudentId();
@@ -76,6 +77,7 @@ public class ProctoringController(
 
     /// <summary>Records explicit consent and opens the monitoring session for this login.</summary>
     [HttpPost("consent")]
+    [Authorize(Policy = Policies.Student)]
     public async Task<IActionResult> Consent([FromBody] ConsentRequest model)
     {
         if (!model.AcceptTerms) throw ApiException.BadRequest("You must accept the competition rules to continue.");
@@ -109,6 +111,7 @@ public class ProctoringController(
     }
 
     [HttpPost("camera-status")]
+    [Authorize(Policy = Policies.Student)]
     public async Task<IActionResult> CameraStatus([FromBody] CameraStatusRequest model)
     {
         var studentId = User.StudentId();
@@ -123,6 +126,7 @@ public class ProctoringController(
 
     /// <summary>Reports an observed violation. The response says what the server decided.</summary>
     [HttpPost("events")]
+    [Authorize(Policy = Policies.Student)]
     [EnableRateLimiting("proctoring")]
     public async Task<IActionResult> Report([FromBody] ViolationRequest model)
     {
@@ -130,13 +134,19 @@ public class ProctoringController(
         return Ok(outcome);
     }
 
-    /// <summary>Uploads a snapshot or short clip for a violation the server just recorded.</summary>
+    /// <summary>
+    /// Uploads a snapshot or short clip for a violation the server just recorded. Authorised by the
+    /// one-event upload token from the report response, so evidence for the very event that ended
+    /// the session (a suspension) can still be delivered.
+    /// </summary>
     [HttpPost("events/{eventId:guid}/evidence")]
+    [Authorize(Policy = Policies.EvidenceUpload)]
     [EnableRateLimiting("proctoring")]
     [RequestSizeLimit(60_000_000)]
     public async Task<IActionResult> UploadEvidence(Guid eventId, IFormFile file)
     {
         var studentId = User.StudentId();
+        if (User.FindFirst("EventId")?.Value != eventId.ToString()) throw ApiException.Forbidden("This upload token is for a different event.");
         var settings = await settingsService.GetAsync();
         if (!settings.EvidenceCaptureEnabled) throw ApiException.Forbidden("Evidence capture is turned off.");
 
@@ -177,6 +187,7 @@ public class ProctoringController(
     }
 
     [HttpPost("end")]
+    [Authorize(Policy = Policies.Student)]
     public async Task<IActionResult> End()
     {
         var session = await CurrentSession(User.StudentId(), tracking: true);

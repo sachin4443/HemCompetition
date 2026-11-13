@@ -68,6 +68,7 @@ builder.Services.AddAuthorization(options =>
     // A token is only good for the kind of user it was issued to.
     options.AddPolicy(Policies.Student, p => p.RequireAuthenticatedUser().RequireClaim(TokenTypes.Claim, TokenTypes.Student));
     options.AddPolicy(Policies.Admin, p => p.RequireAuthenticatedUser().RequireClaim(TokenTypes.Claim, TokenTypes.Admin));
+    options.AddPolicy(Policies.EvidenceUpload, p => p.RequireAuthenticatedUser().RequireClaim(TokenTypes.Claim, TokenTypes.Evidence));
     options.AddPolicy(Policies.StudentOrAppeal, p => p.RequireAuthenticatedUser().RequireClaim(TokenTypes.Claim, TokenTypes.Student, TokenTypes.Appeal));
 });
 

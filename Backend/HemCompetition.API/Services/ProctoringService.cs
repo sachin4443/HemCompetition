@@ -7,7 +7,7 @@ namespace HemCompetition.API.Services;
 
 public sealed record ViolationOutcome(
     bool Recorded, Guid? EventId, string RuleCode, string Severity, string Action, int Occurrence,
-    int? TerminateAfter, int? SuspendAfter, bool CaptureImage, bool CaptureVideo, string Message);
+    int? TerminateAfter, int? SuspendAfter, bool CaptureImage, bool CaptureVideo, string Message, string? UploadToken = null);
 
 /// <summary>
 /// Central anti-cheating policy. The browser only reports what it observed; counting, escalation,
@@ -15,7 +15,7 @@ public sealed record ViolationOutcome(
 /// </summary>
 public sealed class ProctoringService(
     AppDbContext db, SettingsService settingsService, CompetitionService competitions,
-    GameAttemptService games, QuizAttemptService quizzes, BanService bans)
+    GameAttemptService games, QuizAttemptService quizzes, BanService bans, TokenService tokens)
 {
     /// <summary>Events of the same rule closer together than this are one incident.</summary>
     private static readonly TimeSpan Debounce = TimeSpan.FromSeconds(3);
@@ -99,11 +99,11 @@ public sealed class ProctoringService(
 
         var settings = await settingsService.GetAsync();
         var mayCapture = settings.EvidenceCaptureEnabled && session?.EvidenceConsent == true;
+        var image = mayCapture && rule.CaptureImage;
+        var video = mayCapture && rule.CaptureVideo && settings.VideoEvidenceEnabled && session!.VideoConsent;
         return new ViolationOutcome(true, evt.Id, ruleCode, rule.Severity.ToString(), action.ToString(), occurrence,
-            Limit(rule.TerminateAfter), Limit(rule.SuspendAfter),
-            mayCapture && rule.CaptureImage,
-            mayCapture && rule.CaptureVideo && settings.VideoEvidenceEnabled && session!.VideoConsent,
-            text);
+            Limit(rule.TerminateAfter), Limit(rule.SuspendAfter), image, video, text,
+            image || video ? tokens.EvidenceToken(studentId, evt.Id) : null);
     }
 
     /// <summary>For violations the server itself detects (for example a second login).</summary>

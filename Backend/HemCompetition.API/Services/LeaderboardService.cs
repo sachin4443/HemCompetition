@@ -52,7 +52,8 @@ public sealed class LeaderboardService(AppDbContext db)
             r.QuizScore += q.Score; r.TimeTakenSeconds += q.Time; r.Attempts += q.Count; r.Flagged |= q.Flagged;
         }
 
-        var ordered = rows.Values.OrderByDescending(r => r.TotalScore = r.QuizScore + r.NumberScore + r.WordScore)
+        foreach (var r in rows.Values) r.TotalScore = r.QuizScore + r.NumberScore + r.WordScore;
+        var ordered = rows.Values.OrderByDescending(r => r.TotalScore)
             .ThenBy(r => r.TimeTakenSeconds).ThenBy(r => r.StudentId).ToList();
         // Equal score and equal time share a rank.
         for (var i = 0; i < ordered.Count; i++)
