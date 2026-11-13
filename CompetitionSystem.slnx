@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="Backend/HemCompetition.API/HemCompetition.API.csproj" />
+  <Project Path="Backend/HemCompetition.Tests/HemCompetition.Tests.csproj" />
 </Solution>

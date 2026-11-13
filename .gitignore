@@ -426,3 +426,7 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# Platform runtime data and build output
+Backend/HemCompetition.API/App_Data/
+Backend/HemCompetition.API/wwwroot/

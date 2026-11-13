@@ -1,139 +1,50 @@
-﻿using HemCompetition.API.Services;
+using HemCompetition.API.Security;
+using HemCompetition.API.Services;
 
-namespace HemCompetition.API.Middleware
+namespace HemCompetition.API.Middleware;
+
+/// <summary>
+/// Every request made with a student token must belong to that student's one live session.
+/// Signing in elsewhere, an admin terminating the session, a suspension, or a missed heartbeat
+/// all invalidate the token immediately, regardless of its expiry time.
+/// </summary>
+public class SessionValidationMiddleware(RequestDelegate next)
 {
-    public class SessionValidationMiddleware
+    public async Task InvokeAsync(HttpContext context, SessionService sessions)
     {
-        private readonly RequestDelegate _next;
-
-        public SessionValidationMiddleware(RequestDelegate next)
+        var user = context.User;
+        if (user.Identity?.IsAuthenticated == true && user.IsStudent())
         {
-            _next = next;
-        }
-
-        public async Task InvokeAsync(
-            HttpContext context,
-            IAuthSessionService authSessionService)
-        {
-            // ==========================================
-            // ADMIN JWT
-            // ==========================================
-
-            if (context.User.Identity?.IsAuthenticated == true &&
-                context.User.HasClaim("AdminRole", "Admin"))
+            var sessionId = user.SessionId();
+            if (sessionId == Guid.Empty || !long.TryParse(user.FindFirst("UserId")?.Value, out var userId) ||
+                !await sessions.IsValidAsync(userId, sessionId))
             {
-                await _next(context);
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsJsonAsync(new { message = "Your session has ended. Please sign in again.", code = "SESSION_EXPIRED" });
                 return;
             }
-
-
-            var path = context.Request.Path.Value?.ToLowerInvariant();
-
-
-            // ==========================================
-            // PUBLIC APIs / STATIC FILES
-            // ==========================================
-
-            if (path != null &&
-                (
-                    path.StartsWith("/api/auth/login") ||
-                    path.StartsWith("/api/auth/terminate-session") ||
-                    path.StartsWith("/api/auth/logout") ||
-                    path.StartsWith("/api/auth/heartbeat") ||
-                    path.StartsWith("/api/adminauth/login") ||
-                    path.StartsWith("/swagger") ||
-                    path.StartsWith("/favicon") ||
-                    path.StartsWith("/index.html") ||
-                    path.StartsWith("/assets") ||
-                    path.StartsWith("/css") ||
-                    path.StartsWith("/js") ||
-                    path.StartsWith("/images")
-                ))
-            {
-                await _next(context);
-                return;
-            }
-
-
-            // ==========================================
-            // NORMAL USER SESSION
-            // ==========================================
-
-            if (context.User.Identity?.IsAuthenticated == true)
-            {
-                var userIdClaim =
-                    context.User.FindFirst("UserId")?.Value;
-
-                var sessionIdClaim =
-                    context.User.FindFirst("SessionId")?.Value;
-
-
-                if (string.IsNullOrEmpty(userIdClaim) ||
-                    string.IsNullOrEmpty(sessionIdClaim))
-                {
-                    context.Response.StatusCode = 401;
-
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        message = "Invalid Session."
-                    });
-
-                    return;
-                }
-
-
-                if (!long.TryParse(
-                        userIdClaim,
-                        out var userId))
-                {
-                    context.Response.StatusCode = 401;
-
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        message = "Invalid UserId."
-                    });
-
-                    return;
-                }
-
-
-                if (!Guid.TryParse(
-                        sessionIdClaim,
-                        out var sessionId))
-                {
-                    context.Response.StatusCode = 401;
-
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        message = "Invalid SessionId."
-                    });
-
-                    return;
-                }
-
-
-                var valid =
-                    await authSessionService
-                        .ValidateSessionAsync(
-                            userId,
-                            sessionId);
-
-
-                if (!valid)
-                {
-                    context.Response.StatusCode = 401;
-
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        message = "Session Expired."
-                    });
-
-                    return;
-                }
-            }
-
-
-            await _next(context);
         }
+        await next(context);
+    }
+}
+
+/// <summary>Baseline browser hardening for every response.</summary>
+public class SecurityHeadersMiddleware(RequestDelegate next)
+{
+    public Task InvokeAsync(HttpContext context)
+    {
+        var h = context.Response.Headers;
+        h["X-Content-Type-Options"] = "nosniff";
+        h["X-Frame-Options"] = "DENY";
+        h["Referrer-Policy"] = "no-referrer";
+        // The camera is needed for proctoring; everything else is switched off.
+        h["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=(), payment=()";
+        h["Content-Security-Policy"] =
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; " +
+            "worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+        if (context.Request.Path.StartsWithSegments("/api"))
+            h["Cache-Control"] = "no-store";
+        return next(context);
     }
 }
