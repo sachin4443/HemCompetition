@@ -17,23 +17,61 @@ public sealed class LoginRequest
     [Required, StringLength(200)] public string Password { get; set; } = string.Empty;
     /// <summary>Set after the student confirms they want to end a session that is open elsewhere.</summary>
     public bool TerminateExisting { get; set; }
+    [StringLength(64)] public string? CaptchaId { get; set; }
+    [StringLength(16)] public string? CaptchaAnswer { get; set; }
 }
 
 [ApiController]
 [Route("api/auth")]
 public class AuthController(
     AppDbContext db, TokenService tokens, SessionService sessions, BanService bans,
-    SettingsService settingsService, ProctoringService proctoring) : ControllerBase
+    SettingsService settingsService, ProctoringService proctoring, CaptchaService captcha) : ControllerBase
 {
     private static readonly PasswordHasher<AuthUser> Hasher = new();
     // Verified when the username is unknown so both paths take the same time.
     private static readonly string DummyHash = Hasher.HashPassword(new AuthUser(), Guid.NewGuid().ToString());
+
+    /// <summary>A new captcha for the sign-in form. Null image when the captcha is switched off.</summary>
+    [HttpGet("captcha")]
+    [EnableRateLimiting("login")]
+    public async Task<IActionResult> Captcha()
+    {
+        if (!(await settingsService.GetAsync()).LoginCaptchaEnabled) return Ok(new { enabled = false });
+        var challenge = captcha.Create();
+        return Ok(new
+        {
+            enabled = true,
+            id = challenge.Id,
+            image = "data:image/svg+xml;base64," + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(challenge.Svg))
+        });
+    }
 
     [HttpPost("login")]
     [EnableRateLimiting("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest model)
     {
         var settings = await settingsService.GetAsync();
+        if (settings.LoginCaptchaEnabled)
+        {
+            // Checked before the password so a script cannot test passwords without solving it.
+            if (!captcha.Check(model.CaptchaId, model.CaptchaAnswer))
+                return BadRequest(new { code = "CAPTCHA_INVALID", message = "The verification code is not correct. Please try the new code." });
+        }
+        // The "already signed in elsewhere" answer asks the student to confirm and resend, so the
+        // same captcha stays valid for that one case; every other outcome uses it up.
+        var keepCaptcha = false;
+        try
+        {
+            return await LoginCore(model, settings, () => keepCaptcha = true);
+        }
+        finally
+        {
+            if (!keepCaptcha) captcha.Consume(model.CaptchaId);
+        }
+    }
+
+    private async Task<IActionResult> LoginCore(LoginRequest model, PlatformSettings settings, Action keepCaptcha)
+    {
         var login = model.UsernameOrEmail.Trim();
         var user = await db.AuthUsers.FirstOrDefaultAsync(u => u.Username == login || u.Email == login);
         var now = DateTime.UtcNow;
@@ -99,12 +137,15 @@ public class AuthController(
 
         var live = await sessions.GetLiveAsync(user.UserId);
         if (live != null && !model.TerminateExisting)
+        {
+            keepCaptcha();
             return Conflict(new
             {
                 code = "SESSION_ACTIVE",
                 requiresSessionTermination = true,
                 message = "You are already signed in on another device or tab."
             });
+        }
 
         var session = await sessions.CreateAsync(user.UserId,
             HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());

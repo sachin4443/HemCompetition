@@ -14,6 +14,8 @@ public sealed class PlatformSettings
     // --- sign-in ---
     public int MaxFailedLogins { get; set; } = 5;
     public int LockoutMinutes { get; set; } = 15;
+    /// <summary>Students must type a verification code shown as an image when signing in.</summary>
+    public bool LoginCaptchaEnabled { get; set; } = true;
 
     // --- proctoring ---
     /// <summary>Changing this makes every student accept the terms again.</summary>

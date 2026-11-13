@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import Swal from 'sweetalert2'
 import api, { errorCode, errorMessage } from '../api/client'
@@ -29,8 +29,16 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState(null)
+  const [captcha, setCaptcha] = useState(null) // { enabled, id, image }
+  const [captchaAnswer, setCaptchaAnswer] = useState('')
+
+  const loadCaptcha = useCallback(() => {
+    setCaptchaAnswer('')
+    api.get('/auth/captcha').then((r) => setCaptcha(r.data)).catch(() => setCaptcha({ enabled: true, failed: true }))
+  }, [])
 
   useEffect(() => { api.get('/competition/active').then((r) => setInfo(r.data)).catch(() => {}) }, [])
+  useEffect(() => { loadCaptcha() }, [loadCaptcha])
 
   if (auth.status === 'loading') return <Spinner full />
   if (auth.status === 'authed') return <Navigate to="/precheck" replace />
@@ -38,10 +46,11 @@ export default function LoginPage() {
   const submit = async (e, terminateExisting = false) => {
     e?.preventDefault()
     if (!username.trim() || !password) { setError('Enter your username and password.'); return }
+    if (captcha?.enabled && !captchaAnswer.trim()) { setError('Type the verification code shown in the picture.'); return }
     setBusy(true)
     setError('')
     try {
-      await auth.login(username.trim(), password, terminateExisting)
+      await auth.login(username.trim(), password, terminateExisting, { id: captcha?.id, answer: captchaAnswer })
       navigate('/precheck', { replace: true })
     } catch (err) {
       const code = errorCode(err)
@@ -52,12 +61,14 @@ export default function LoginPage() {
           showCancelButton: true, confirmButtonText: 'Continue here', reverseButtons: true,
         })
         if (result.isConfirmed) { setBusy(false); return submit(null, true) }
+        loadCaptcha()
       } else if (code === 'BANNED') {
         // Access is restricted: go to the page that explains why and offers a review request.
         navigate('/appeal', { replace: true, state: err.response.data })
         return
       } else {
         setError(errorMessage(err))
+        loadCaptcha() // a code can be used only once
       }
     }
     setBusy(false)
@@ -81,7 +92,7 @@ export default function LoginPage() {
               <input id="login-user" className="form-control form-control-lg mb-3" autoComplete="username" autoCapitalize="none" spellCheck={false}
                 value={username} onChange={(e) => setUsername(e.target.value)} maxLength={256} required />
               <label className="form-label fw-semibold small" htmlFor="login-pass">Password</label>
-              <div className="input-group input-group-lg mb-4">
+              <div className="input-group input-group-lg mb-3">
                 <input id="login-pass" className="form-control" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
                   value={password} onChange={(e) => setPassword(e.target.value)} maxLength={200} required />
                 <button type="button" className="btn btn-outline-secondary" onClick={() => setShowPassword((s) => !s)}
@@ -89,6 +100,21 @@ export default function LoginPage() {
                   <i className={`bi ${showPassword ? 'bi-eye-slash' : 'bi-eye'}`} aria-hidden="true" />
                 </button>
               </div>
+              {captcha?.enabled && (
+                <div className="mb-4">
+                  <label className="form-label fw-semibold small" htmlFor="login-captcha">Verification code</label>
+                  <div className="d-flex align-items-center gap-2 mb-2">
+                    {captcha.image
+                      ? <img src={captcha.image} alt="Verification code: type the five digits shown" className="border rounded-3" style={{ height: 70, maxWidth: 'calc(100% - 56px)' }} />
+                      : <div className="border rounded-3 px-3 py-2 small text-secondary">{captcha.failed ? 'Could not load the code.' : 'Loading…'}</div>}
+                    <button type="button" className="btn btn-outline-secondary" onClick={loadCaptcha} aria-label="Show a different code" title="Show a different code">
+                      <i className="bi bi-arrow-clockwise" aria-hidden="true" />
+                    </button>
+                  </div>
+                  <input id="login-captcha" className="form-control form-control-lg" inputMode="numeric" autoComplete="off" maxLength={5}
+                    placeholder="Type the 5 digits" value={captchaAnswer} onChange={(e) => setCaptchaAnswer(e.target.value.replace(/\D/g, ''))} />
+                </div>
+              )}
               <button type="submit" className="btn btn-success btn-lg w-100 rounded-pill" disabled={busy}>
                 {busy && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}Sign in
               </button>

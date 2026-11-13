@@ -80,6 +80,8 @@ history, leaderboard, admin screens and reports need no change.
   (upload for one violation event only). Each endpoint accepts exactly one kind.
 * Students: one live session; every request is checked against it; heartbeat every 30 s.
 * Lockout after repeated failures, rate limits per address and per user, uniform login error.
+* Student sign-in requires a captcha: a five-digit code drawn server-side as a dot-matrix SVG, valid
+  for three minutes and for one attempt. It can be switched off under Admin → Settings.
 * Admins: role → permissions in the database, checked on every request by `[RequirePermission]`.
 
 ## Proctoring

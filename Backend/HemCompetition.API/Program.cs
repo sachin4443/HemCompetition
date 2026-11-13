@@ -112,6 +112,7 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpContextAccessor();
 
+builder.Services.AddSingleton<CaptchaService>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<SessionService>();
 builder.Services.AddScoped<SettingsService>();
@@ -187,7 +188,9 @@ else
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+// In development the Vite dev server proxies plain HTTP; redirecting would turn every API call
+// into a cross-origin request.
+if (!app.Environment.IsDevelopment()) app.UseHttpsRedirection();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 
 var contentTypes = new FileExtensionContentTypeProvider();

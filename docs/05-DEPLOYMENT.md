@@ -35,6 +35,11 @@ cd Backend/HemCompetition.API && dotnet run     # http://localhost:5098, applies
 cd Frontend && npm install && npm run dev       # http://localhost:3000, proxies /api to the API
 ```
 
+The Vite dev server forwards `/api` to `https://localhost:7190` (the "https" launch profile in
+Visual Studio; its self-signed certificate is accepted). If you run the API on another address, set
+`VITE_API_TARGET`, for example `VITE_API_TARGET=http://localhost:5098 npm run dev`. Always open the
+app at `http://localhost:3000` in development, not the API port.
+
 `appsettings.Development.json` holds development-only values (local database, dev signing key,
 admin `admin` / `ChangeMe-Dev-2026`).
 

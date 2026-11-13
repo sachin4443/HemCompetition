@@ -165,6 +165,7 @@ export function SettingsPage() {
       </PageHeader>
       <Card className="mb-3">
         <h2 className="h6 fw-bold">Sign-in security</h2>
+        <Check label="Students must type a verification code (captcha) when signing in" checked={v.loginCaptchaEnabled} onChange={set('loginCaptchaEnabled')} />
         <div className="row g-2">
           {num('maxFailedLogins', 'Failed sign-ins before lockout', '3–20', { min: 3, max: 20 })}
           {num('lockoutMinutes', 'Lockout length (minutes)', null, { min: 1, max: 1440 })}
